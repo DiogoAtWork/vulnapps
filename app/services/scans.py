@@ -838,7 +838,7 @@ async def match_finding(db, user, scan_id: int, finding_id: int, vuln_ids, chain
     # Matching (or clearing) a finding also lifts any "ignored" flag — the
     # states are mutually exclusive.
     await db.execute(
-        "UPDATE scan_findings SET is_false_positive = ?, is_ignored = 0, fp_group = NULL "
+        "UPDATE scan_findings SET is_false_positive = ?, is_ignored = 0, fp_group = NULL, fp_impact_weight = NULL "
         "WHERE id = ? AND scan_id = ?",
         (is_false_positive, finding_id, scan_id),
     )
@@ -905,17 +905,20 @@ async def match_finding(db, user, scan_id: int, finding_id: int, vuln_ids, chain
     }
 
 
-async def mark_finding_fp(db, user, scan_id: int, finding_id: int, fp_group=None) -> None:
+async def mark_finding_fp(db, user, scan_id: int, finding_id: int, fp_group=None,
+                          fp_impact_weight=...) -> None:
     """Mark a finding as false positive (clears any match/ignore).
 
     *fp_group* clusters findings that describe the SAME non-issue, so precision
     counts one FP rather than three. Ungrouped FPs count individually.
+    Reviewer penalties are independent of reported severity. Omission preserves
+    an existing penalty; None resets it to unreviewed (27 conservative points).
     """
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
 
     cursor = await db.execute(
-        "SELECT title, vuln_type FROM scan_findings WHERE id = ? AND scan_id = ?",
+        "SELECT title, vuln_type, fp_impact_weight FROM scan_findings WHERE id = ? AND scan_id = ?",
         (finding_id, scan_id),
     )
     finding = await cursor.fetchone()
@@ -923,16 +926,25 @@ async def mark_finding_fp(db, user, scan_id: int, finding_id: int, fp_group=None
         raise ValueError("Finding not found")
     finding_label = finding["title"] or finding["vuln_type"] or f"finding #{finding_id}"
 
+    if fp_impact_weight is ...:
+        fp_impact_weight = finding["fp_impact_weight"]
+    elif fp_impact_weight is not None and (
+        type(fp_impact_weight) is not int or fp_impact_weight not in scoring.WEIGHT_SCALE
+    ):
+        raise ValueError("fp_impact_weight must be null or one of 1, 3, 9, 27")
     group = (fp_group or "").strip() or None
     await finding_matches.clear(db, finding_id)
     await db.execute(
-        "UPDATE scan_findings SET is_false_positive = 1, is_ignored = 0, fp_group = ? WHERE id = ? AND scan_id = ?",
-        (group, finding_id, scan_id),
+        "UPDATE scan_findings SET is_false_positive = 1, is_ignored = 0, fp_group = ?, fp_impact_weight = ? WHERE id = ? AND scan_id = ?",
+        (group, fp_impact_weight, finding_id, scan_id),
     )
     await audit_service.record_audit_event(
         db, entity_type="scan_finding", action="finding_marked_fp", actor=user,
-        message=f"{user['name']} marked \"{finding_label}\" as a false positive",
+        message=f"{user['name']} marked \"{finding_label}\" as a false positive"
+                f" (impact penalty: {fp_impact_weight if fp_impact_weight is not None else 'unreviewed, 27 conservative'} points)",
         entity_id=finding_id, scan_id=scan_id,
+        details={"fp_group": group, "fp_impact_weight": fp_impact_weight,
+                 "previous_fp_impact_weight": finding["fp_impact_weight"]},
     )
     await db.commit()
 
@@ -1046,7 +1058,7 @@ async def set_finding_ignored(db, user, scan_id: int, finding_id: int, ignored: 
 
         await finding_matches.clear(db, finding_id)
         await db.execute(
-            "UPDATE scan_findings SET is_ignored = 1, is_false_positive = 0, fp_group = NULL WHERE id = ? AND scan_id = ?",
+            "UPDATE scan_findings SET is_ignored = 1, is_false_positive = 0, fp_group = NULL, fp_impact_weight = NULL WHERE id = ? AND scan_id = ?",
             (finding_id, scan_id),
         )
         message = f"{user['name']} marked \"{finding_label}\" as ignored"
@@ -1195,7 +1207,7 @@ async def promote_finding(
 
     await finding_matches.replace(db, finding_id, [new_vuln_id], [])
     await db.execute(
-        "UPDATE scan_findings SET is_false_positive = 0, is_ignored = 0, fp_group = NULL WHERE id = ?",
+        "UPDATE scan_findings SET is_false_positive = 0, is_ignored = 0, fp_group = NULL, fp_impact_weight = NULL WHERE id = ?",
         (finding_id,),
     )
 
@@ -1271,7 +1283,7 @@ async def promote_finding_to_chain(
     )
     await db.execute(
         "UPDATE scan_findings SET is_chain = 1, is_false_positive = 0, is_ignored = 0, "
-        "fp_group = NULL WHERE id = ?",
+        "fp_group = NULL, fp_impact_weight = NULL WHERE id = ?",
         (finding_id,),
     )
 
@@ -1331,7 +1343,7 @@ async def rematch_scan(db, user, scan_id: int) -> dict:
         ):
             await finding_matches.replace(db, f["id"], new_vuln_ids, [])
             await db.execute(
-                "UPDATE scan_findings SET is_false_positive = ? WHERE id = ?",
+                "UPDATE scan_findings SET is_false_positive = ?, fp_group = NULL, fp_impact_weight = NULL WHERE id = ?",
                 (is_false_positive, f["id"]),
             )
             updated += 1

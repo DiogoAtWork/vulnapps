@@ -206,7 +206,7 @@ def compute_metrics(
         the upper bound assumes none do. They converge as adjudication
         completes; ``adjudication_complete`` says whether they have.
     ``weighted_rate``
-        The headline metric: ``weighted_found / weighted_total``. A matched
+        Impact coverage: ``weighted_found / weighted_total``. A matched
         vuln scores its full weight. A chain scores its full weight when
         EITHER: (a) some finding is matched directly to the chain
         (``matched_chain_ids``) — the scanner's own report contained one
@@ -220,6 +220,12 @@ def compute_metrics(
         denying any connection between them ("independent of SQL
         injection") and would otherwise have scored full chain credit
         anyway.
+    ``weighted_f05`` / ``weighted_precision``
+        Conservative impact scores, including existing confirmed-chain credit.
+        Reviewer FP penalties use 1/3/9/27; a cluster takes its maximum.
+        Unreviewed FPs and each pending finding cost 27. ``*_upper`` excludes
+        pending penalties only; it is not an upper bound on later TP credit.
+        Empty corpora return None. Precision is also None with no predictions.
     ``severity_accuracy``
         Of all TP findings (``severity_checked`` == ``tp``), the fraction whose
         reported severity exactly matches the matched vuln's ground-truth
@@ -420,6 +426,30 @@ def compute_metrics(
     weighted_found = round(weighted_found, 4)
     weighted_rate = weighted_found / weighted_total if weighted_total else 0.0
 
+    fp_penalties = {}
+    unreviewed_groups = set()
+    for index, finding in enumerate(fp_findings):
+        group = str(field(finding, "fp_group", "") or "").strip().lower()
+        key = ("group", group) if group else ("finding", index)
+        penalty = field(finding, "fp_impact_weight")
+        if penalty not in WEIGHT_SCALE:
+            penalty = max(WEIGHT_SCALE)
+            unreviewed_groups.add(key)
+        fp_penalties[key] = max(fp_penalties.get(key, 0), penalty)
+    weighted_fp_penalty = sum(fp_penalties.values())
+    pending_penalty = pending * max(WEIGHT_SCALE)
+    weighted_precision = weighted_precision_upper = None
+    weighted_f05 = weighted_f05_upper = None
+    if weighted_total > 0:
+        upper_denominator = weighted_found + weighted_fp_penalty
+        lower_denominator = upper_denominator + pending_penalty
+        weighted_precision_upper = weighted_found / upper_denominator if upper_denominator else None
+        weighted_precision = weighted_found / lower_denominator if lower_denominator else None
+        weighted_missed = weighted_total - weighted_found
+        upper_f05_denominator = 1.25 * weighted_found + 0.25 * weighted_missed + weighted_fp_penalty
+        weighted_f05_upper = 1.25 * weighted_found / upper_f05_denominator
+        weighted_f05 = 1.25 * weighted_found / (upper_f05_denominator + pending_penalty)
+
     return {
         # counts
         "tp": tp,
@@ -444,6 +474,14 @@ def compute_metrics(
         "weighted_found": weighted_found,
         "weighted_total": float(weighted_total),
         "weighted_rate": weighted_rate,
+        "weighted_precision": weighted_precision,
+        "weighted_precision_upper": weighted_precision_upper,
+        "weighted_f05": weighted_f05,
+        "weighted_f05_upper": weighted_f05_upper,
+        "weighted_fp_penalty": weighted_fp_penalty,
+        "weighted_pending_penalty": pending_penalty,
+        "weighted_fp_unreviewed": len(unreviewed_groups),
+        "weighted_score_provisional": pending > 0 or bool(unreviewed_groups),
         "tiers": tiers,
         # detail for the UI / matrix builders
         "matched_vuln_ids": in_scope_matched,

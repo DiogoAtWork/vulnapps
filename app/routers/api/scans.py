@@ -190,16 +190,27 @@ async def mark_finding_fp(request: Request, scan_id: int, finding_id: int):
     require_scope(user, "vuln-mapper")
     raw = await request.body()
     fp_group = None
+    penalty_kwargs = {}
     if raw:
         import json
         try:
-            fp_group = (json.loads(raw) or {}).get("fp_group")
+            body = json.loads(raw)
+            if not isinstance(body, dict):
+                raise HTTPException(status_code=400, detail="Expected a JSON object")
+            fp_group = body.get("fp_group")
+            if fp_group is not None and not isinstance(fp_group, str):
+                raise HTTPException(status_code=400, detail="fp_group must be a string or null")
+            if "fp_impact_weight" in body:
+                penalty = body["fp_impact_weight"]
+                if penalty is not None and (type(penalty) is not int or penalty not in (1, 3, 9, 27)):
+                    raise HTTPException(status_code=400, detail="fp_impact_weight must be null or one of 1, 3, 9, 27")
+                penalty_kwargs["fp_impact_weight"] = penalty
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     db = await get_connection()
     try:
-        await scans_service.mark_finding_fp(db, user, scan_id, finding_id, fp_group)
+        await scans_service.mark_finding_fp(db, user, scan_id, finding_id, fp_group, **penalty_kwargs)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except PermissionError as e:

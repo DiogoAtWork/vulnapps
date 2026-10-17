@@ -454,7 +454,11 @@ async def test_scan_list_metrics_match_live_scoring_across_corpora_and_chain_cre
         assert scan["metrics"]
         for key, value in scan["metrics"].items():
             assert value == expected[key], (scan["id"], key)
-            assert isinstance(value, (int, float, bool))
+            assert isinstance(value, (int, float, bool)) or (
+                value is None and key in {
+                    "weighted_precision", "weighted_precision_upper", "weighted_f05", "weighted_f05_upper"
+                }
+            )
     # Partial chain members receive only their own points, never inferred chain credit.
     assert scans[partial_id]["metrics"]["weighted_found"] == 9
     assert scans[partial_id]["metrics"]["weighted_total"] == 39

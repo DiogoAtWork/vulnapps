@@ -2136,12 +2136,12 @@ descriptive variation rather than evidence of performance differences.
 
 Quality summaries default to Weighted, with an explicit Unweighted toggle saved as
 `weighting=unweighted` in the URL. Weighted shows canonical impact-weighted detection,
-points found, and points available; no weighted precision/F1 is invented. Unweighted shows
+reviewed weighted F₀.₅ and weighted precision (see Reviewed weighted F₀.₅ below). Unweighted shows
 count-based precision, recall, and F1 from the same current-revision scorer. Each scan
 remains equally weighted when aggregating scores. Zero available points yields unavailable
 detection, not zero percent. Reset filters preserves the scoring choice.
 
-Grouped lists request `include_metrics=true`. The service batches authorized scans' scoring
+All scan-list views request `include_metrics=true`. The service batches authorized scans' scoring
 inputs, shares corpus/revision reads, and calls the canonical scoring implementation. The
 ordinary list omits this optional computation. Failed list requests clear stale results and
 show the load error rather than a misleading successful empty state.
@@ -2164,12 +2164,12 @@ clearing App. The team filter remains available in the cross-app list.
 ### Run performance chart
 The scans page has an optional Performance chart view independent of grouping. Each point
 represents one filtered scan; History still controls all runs versus latest per scanner/app.
-Default axes are cost in USD and conservative F0.5. X can switch to wall-clock duration in
+Default axes are cost in USD and reviewed weighted F₀.₅. X can switch to wall-clock duration in
 minutes. Y offers conservative F0.5, adjudicated precision, recall, F1, and impact-weighted
 detection (including chain credit). Conservative F0.5 uses
 1.25 TP / (1.25 TP + 0.25 FN + clustered FP + pending), prioritizes precision, and is undefined
 without a benchmark corpus. This follows testbed's unresolved-item penalty with vulnapps'
-canonical clustered FP units. Weighted precision/F0.5 are not offered without weighted FP data.
+canonical clustered FP units. Weighted F₀.₅ is the default chart score; FP penalties follow the policy below.
 Use canonical current-revision metrics. Missing or unauthorized cost/duration and undefined
 scores are excluded, counted visibly, never plotted as zero. Zero cost and zero scores remain
 valid. Colors identify scanners. Hover/focus reveals a run; clicking/selecting opens its
@@ -2181,3 +2181,52 @@ must redact cost, tokens, duration, and notes using scan-detail visibility rules
 
 The scatter chart includes a green dashed upper-left guide for higher quality and lower
 cost/shorter duration. This is a directional visual cue, not a scoring threshold.
+
+## Reviewed weighted F₀.₅
+
+The scan list Quality view shows Scanner, App (when unscoped), Date, sortable
+Weighted F₀.₅, combined FP/Pending Review, and Labels. Counts exposes TP/FP/Pending/FN
+and severity. The shared Quality/Counts control also applies to grouped views;
+Weighted/Unweighted applies to summary scoring only. Preserve combined app coverage
+in the footer rather than summing repeat scans.
+
+Let T be credited impact, A available corpus impact and E clustered FP penalties.
+Use existing 1/3/9/27 ground-truth weights and confirmed-chain credit; each vulnerability
+and each credited chain counts once. Chains remain separately weighted corpus items.
+
+- Weighted recall/detection = T/A.
+- Weighted precision = T/(T+E).
+- Weighted F₀.₅ = 1.25T/(T + 0.25A + E).
+- Reviewer FP penalties use 1/3/9/27, independently of scanner-reported severity.
+  A cluster takes its maximum member penalty; ungrouped FPs cost individually.
+- Headlines, sorting, chart points and group statistics require
+  `weighted_score_provisional === false`. Incomplete or unknown review shows
+  **Awaiting review**. Weighted detection remains available independently.
+- Groups macro-average reviewed scores only, showing measured/total sample counts
+  and awaiting-review counts. No reviewed samples shows Awaiting review.
+- Detail exposes a closed Conservative estimate disclosure: missing FP reviews cost
+  27 and each pending finding adds 27 (U). Estimated precision = T/(T+E+U); estimated
+  F₀.₅ = 1.25T/(T+0.25A+E+U). These estimates never select a winner.
+- Empty corpora yield null weighted precision/F₀.₅. No predictions yields undefined
+  precision; a nonempty corpus with no detections yields F₀.₅ = 0.
+- `weighted_f05_upper` / `weighted_precision_upper` omit pending penalties only,
+  not forecasts of additional TP credit. These API fields are not displayed.
+
+Migration 043 adds nullable `scan_findings.fp_impact_weight` constrained to 1/3/9/27.
+Existing FPs remain unreviewed. The existing mark-fp endpoint accepts this field:
+omission preserves the stored value, null resets review, and an integer sets the
+penalty. Existing scan-write permissions and mapper scope apply; invalid input yields
+400. Penalty changes enter the audit log. Matching, rematching, ignoring or promoting
+a finding (to a vulnerability or chain) clears its FP penalty. Imports cannot assign
+reviewer penalties. Existing count-based precision/recall/F1 remain unchanged.
+
+Comparison shows canonical weighted F₀.₅ for the full corpus only. Severity filters
+show Requires full corpus. The trophy selects the unique positive highest reviewed
+weighted F₀.₅ only when all selected runs have scores; ties, one run, unreviewed or
+missing scores, and severity filtering suppress the winner. Tooltips name its basis.
+Scoring explanations are collapsed by default. Legacy cross-app dashboard/scanner
+aggregates retain count metrics; weighted F₀.₅ is not inferred from pooled counts.
+
+Weights express a review policy, not dollar costs. Compare runs within the same app
+version and benchmark corpus. Mock previews use synthetic data and never modify
+production.

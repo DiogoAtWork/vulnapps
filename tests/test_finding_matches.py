@@ -232,3 +232,54 @@ async def test_deleting_a_finding_cascades_its_matches(db):
         "SELECT COUNT(*) AS c FROM finding_matches WHERE finding_id = ?", (fid,)
     )
     assert (await cursor.fetchone())["c"] == 0
+
+
+async def test_reviewer_fp_penalty_persists_is_audited_and_requires_scan_write(db):
+    import json
+    import pytest
+    from app.services import audit, scoring as scoring_service
+
+    app_id = await make_app(db)
+    await add_vuln(db, app_id, "KNOWN")
+    scan_id = await submit(db, app_id, [{"vuln_type": "Other", "title": "Noise"}])
+    fid = await only_finding(db, scan_id)
+    await scans_service.mark_finding_fp(db, ADMIN, scan_id, fid, fp_impact_weight=3)
+    scored = await scoring_service.score_many(db, [{"id": scan_id, "app_id": app_id}])
+    assert scored[scan_id]["weighted_fp_penalty"] == 3
+    assert scored[scan_id]["weighted_score_provisional"] is False
+    events = await audit.list_audit_events(db, scan_id=scan_id)
+    assert json.loads(events[0]["details"])["fp_impact_weight"] == 3
+    await scans_service.mark_finding_fp(db, ADMIN, scan_id, fid, fp_group="same")
+    row = await (await db.execute("SELECT * FROM scan_findings WHERE id = ?", (fid,))).fetchone()
+    assert row["fp_impact_weight"] == 3
+    for invalid in (True, "3", 2, 3.0):
+        with pytest.raises(ValueError, match="fp_impact_weight"):
+            await scans_service.mark_finding_fp(db, ADMIN, scan_id, fid, fp_impact_weight=invalid)
+    with pytest.raises(PermissionError):
+        await scans_service.mark_finding_fp(db, {"sub": 99, "role": "user"}, scan_id, fid, fp_impact_weight=1)
+    await scans_service.mark_finding_fp(db, ADMIN, scan_id, fid, fp_impact_weight=None)
+    scored = await scoring_service.score_many(db, [{"id": scan_id, "app_id": app_id}])
+    assert scored[scan_id]["weighted_fp_penalty"] == 27
+    assert scored[scan_id]["weighted_fp_unreviewed"] == 1
+    await scans_service.set_finding_ignored(db, ADMIN, scan_id, fid, True)
+    row = await (await db.execute("SELECT * FROM scan_findings WHERE id = ?", (fid,))).fetchone()
+    assert row["fp_impact_weight"] is None
+
+
+async def test_rematch_clears_penalty_before_a_new_fp_decision(db):
+    from app.services import scoring as scoring_service
+
+    app_id = await make_app(db)
+    await add_vuln(db, app_id, "KNOWN")
+    scan_id = await submit(db, app_id, [{"vuln_type": "Other", "title": "Noise"}])
+    fid = await only_finding(db, scan_id)
+    await scans_service.mark_finding_fp(db, ADMIN, scan_id, fid, fp_group="noise", fp_impact_weight=1)
+    assert (await scans_service.rematch_scan(db, ADMIN, scan_id))["updated"] == 1
+    row = await (await db.execute("SELECT * FROM scan_findings WHERE id = ?", (fid,))).fetchone()
+    assert row["is_false_positive"] == 0
+    assert row["fp_impact_weight"] is None
+    assert row["fp_group"] is None
+    await scans_service.mark_finding_fp(db, ADMIN, scan_id, fid)
+    metrics = (await scoring_service.score_many(db, [{"id": scan_id, "app_id": app_id}]))[scan_id]
+    assert metrics["weighted_fp_unreviewed"] == 1
+    assert metrics["weighted_score_provisional"] is True

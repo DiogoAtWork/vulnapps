@@ -549,3 +549,19 @@ Still open on the CURRENT app (305), not blocked by the above:
       350) stay untouched pending the user's conversation with whoever imported them —
       except one change made before the hold: the v940 "Hardcoded JWT signing secret"
       finding re-credited CODE-001 -> TP-012.
+
+## Reviewed weighted F₀.₅ (2026-10-17)
+- [x] Add reviewer FP penalties and canonical weighted precision/F₀.₅.
+- [x] Gate headlines, group statistics, chart points and comparison winners on completed review.
+- [x] Keep the scan list compact and conservative estimates inside detail disclosures.
+- [x] Preserve current-main combined app coverage and chain promotion behavior.
+- [x] Verify migration/state transitions, backend/frontend checks and screenshot evidence.
+
+Validation: 225 self-contained backend tests pass on Python 3.12 (CI's production-data
+API exclusion), plus 24 affected state-transition/migration tests after the final chain
+cleanup assertion. All 18 frontend tests, production build and diff checks pass.
+Independent backend/frontend reviews completed; fixed rematch retaining an old reviewer
+penalty and covered chain promotion on current main. Real browser checks against a
+disposable migrated DB verify review/save/reset/reload, group sample eligibility, chart
+exclusions, Quality/Counts coverage footer, weighted winner and severity suppression.
+Four screenshots under docs/screenshots/weighted-f05 use synthetic data only.

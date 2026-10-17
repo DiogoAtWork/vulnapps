@@ -4,6 +4,7 @@ import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge } from '../components/Badge';
 import { LabelBadge } from '../components/LabelBadge';
+import { scanQuality, weightedScoreWinner } from '../utils/scanStatistics';
 
 export default function ScanCompare() {
   const { id: appId } = useParams();
@@ -144,7 +145,7 @@ function ScannerHeader({ s, isWinner }) {
   return (
     <>
       {isWinner && (
-        <div title="Highest weighted detection rate" style={{ fontSize: '1rem', lineHeight: 1, marginBottom: '0.15rem' }}>🏆</div>
+        <div title="Highest reviewed weighted F₀.₅" style={{ fontSize: '1rem', lineHeight: 1, marginBottom: '0.15rem' }}>🏆</div>
       )}
       <Link to={`/scans/${s.scan.id}`}>{s.scan.scanner_name}</Link>
       {s.scan.scanner_version && <span className="text-muted text-xs"> v{s.scan.scanner_version}</span>}
@@ -291,22 +292,7 @@ function ComparisonView({ data, appId }) {
   const filteredVulnCount = filteredMatrix.length;
   const isFiltered = isSevFiltered;
 
-  // Winner is crowned on the WEIGHTED detection rate, not F1: raw counts treat a
-  // missed reflected XSS the same as a missed chained authz bypass, which is the
-  // whole reason the weighted metric exists. Only if it's strictly better than
-  // the runner-up; on ties we don't crown anyone.
-  const winnerIdx = (() => {
-    if (filteredMetrics.length < 2) return -1;
-    let bestIdx = 0;
-    let best = filteredMetrics[0].weighted_rate;
-    let tie = false;
-    for (let i = 1; i < filteredMetrics.length; i++) {
-      const v = filteredMetrics[i].weighted_rate;
-      if (v > best) { best = v; bestIdx = i; tie = false; }
-      else if (v === best) { tie = true; }
-    }
-    return best > 0 && !tie ? bestIdx : -1;
-  })();
+  const winnerIdx = isFiltered ? -1 : weightedScoreWinner(scanners.map(s => ({ metrics: s.metrics })));
 
   const pctColor = v => v >= 0.7 ? 'text-success' : v >= 0.4 ? 'text-warning' : 'text-error';
 
@@ -318,7 +304,8 @@ function ComparisonView({ data, appId }) {
     precision: 'TP / (TP + FP clusters). Shown as a range while findings are still unadjudicated: the lower bound counts every pending finding as a false positive, the upper bound as a true one.',
     recall: 'TP / (TP + FN) — How many of the known vulnerabilities were found',
     f1: 'Harmonic mean of Precision and Recall — Overall scanner accuracy',
-    weighted_rate: 'Severity-weighted detection rate: points found / points available on the 1/3/9/27 scale. The headline metric.',
+    weighted_f05: 'Reviewed impact-weighted F₀.₅ favors precision. Available after finding adjudication and FP penalty review. Credited impact includes chains; reviewer-assigned FP penalties use 1/3/9/27 points. Clusters take their maximum penalty; unreviewed FPs and pending findings cost 27. Requires the full corpus and cannot be recalculated from the severity-filtered vulnerability matrix.',
+    weighted_rate: 'Severity-weighted detection rate: points found / points available on the 1/3/9/27 scale, including chain credit.',
     severity_accuracy: 'Of all true positives, the fraction rated at the same severity as ground truth. A finding that reported no severity at all counts against the scanner too — no rating is still a failure to rate. A miss is bad; a hit rated "low" when it is actually critical is a different kind of bad, and this is the axis that sees it.',
   };
 
@@ -326,7 +313,7 @@ function ComparisonView({ data, appId }) {
     const names = {
       tp: 'True Positives', fp_groups: 'False Positives', fn: 'False Negatives',
       pending: 'Pending', precision: 'Precision', recall: 'Recall', f1: 'F1 Score',
-      weighted_rate: 'Weighted Detection', severity_accuracy: 'Severity Accuracy',
+      weighted_f05: 'Weighted F₀.₅', weighted_rate: 'Weighted detection', severity_accuracy: 'Severity Accuracy',
     };
     const tip = METRIC_TOOLTIPS[k];
     return (
@@ -383,13 +370,21 @@ function ComparisonView({ data, appId }) {
               </tr>
             </thead>
             <tbody>
-              {/* Headline first: the weighted rate is what separates a scanner
-                  with a chat interface from an agent that chains authz bypasses. */}
+              <tr>
+                <td className="detail-label sticky-col"><MetricLabel k="weighted_f05" /></td>
+                {scanners.map(s => {
+                  const score = isFiltered ? null : scanQuality({ metrics: s.metrics }).weighted_f05;
+                  return <td key={s.scan.id} className={`text-center font-mono ${score === null ? 'text-muted' : pctColor(score)}`}>
+                    {!isFiltered && s.metrics.weighted_score_provisional !== false ? 'Awaiting review' : score === null ? '—' : `${(score * 100).toFixed(1)}%`}
+                    {isFiltered ? <div className="text-muted text-xs">Requires full corpus</div> : null}
+                  </td>;
+                })}
+              </tr>
               <tr>
                 <td className="detail-label sticky-col"><MetricLabel k="weighted_rate" /></td>
                 {filteredMetrics.map((m, i) => {
                   const baseStyle = winnerStyle(i);
-                  const style = i === winnerIdx ? { ...baseStyle, fontWeight: 700 } : baseStyle;
+                  const style = baseStyle;
                   return (
                     <td key={scanners[i].scan.id} className={`text-center font-mono ${pctColor(m.weighted_rate)}`} style={style}>
                       {(m.weighted_rate * 100).toFixed(1)}%
@@ -719,7 +714,7 @@ function ChainsMatrix({ chains, scanners, matrix, label }) {
 }
 
 const TREND_METRICS = [
-  ['weighted_rate', 'Weighted Detection'],
+  ['weighted_rate', 'Weighted detection'],
   ['f1', 'F1 Score'],
 ];
 
@@ -728,7 +723,7 @@ const TREND_METRICS = [
 // legend, no rank-based coloring. Values come from the severity-filtered
 // metrics, so the chart recomputes live with the filter. Honest 0–100% y-axis.
 //
-// Defaults to the weighted detection rate — the headline metric — with F1 kept
+// Defaults to weighted detection, with F1 kept
 // one click away. The chart carries the app@revision label because scores are
 // expected to drift downward as ground truth grows: an unlabelled downward
 // trend reads as a regression when it can just as easily be a bigger corpus.
@@ -919,7 +914,7 @@ const RADAR_AXES = [
   ['chained', 'Chained', true],
   ['severity_accuracy', 'Severity Accuracy', false],
   ['precision_upper', 'Precision', false],
-  ['weighted_rate', 'Weighted Detection', false],
+  ['weighted_rate', 'Weighted detection', false],
 ];
 
 // The panel's own fixed drawing size (see RadarPanel) plus its card padding
@@ -1046,7 +1041,7 @@ function RadarPanel({ name, version, isWinner, axes, values, counts }) {
   return (
     <div className="card" style={isWinner ? { borderColor: 'var(--accent)', borderWidth: '1.5px' } : undefined}>
       <div className="text-center mb-1">
-        {isWinner && <span title="Highest weighted detection rate" style={{ marginRight: 4 }}>🏆</span>}
+        {isWinner && <span title="Highest reviewed weighted F₀.₅" style={{ marginRight: 4 }}>🏆</span>}
         <span className="font-mono text-sm" style={{ color: 'var(--text)' }}>{name}</span>
         {version && <span className="text-muted text-xs"> v{version}</span>}
       </div>
