@@ -31,3 +31,12 @@ test('short-duration and tiny-cost ticks remain distinct instead of rounding to 
     assert.notEqual(formatChartResource(.000001, resource), formatChartResource(0, resource));
   }
 });
+
+
+test('weighted chart plots only reviewed scores and excludes awaiting or unscored runs', () => {
+  const scored = { ...scan, metrics: { ...scan.metrics, weighted_score_provisional: false, weighted_f05: .42, weighted_f05_upper: .9 } };
+  const zero = { ...scored, id: 2, metrics: { ...scored.metrics, weighted_f05: 0 } };
+  const runs = chartRuns([scored, zero, scan, { ...scored, metrics: { ...scored.metrics, weighted_score_provisional: true } }], 'cost', 'weighted_f05');
+  assert.deepEqual(runs.points.map(point => point.y), [.42, 0]);
+  assert.equal(runs.missingScore, 2);
+});

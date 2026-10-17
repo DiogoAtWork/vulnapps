@@ -110,7 +110,7 @@ async def test_promote_fp_finding_to_a_new_chain(db):
     cursor = await db.execute("SELECT id FROM scan_findings WHERE scan_id = ?", (scan_id,))
     fid = (await cursor.fetchone())["id"]
     await scans_service.match_finding(db, ADMIN, scan_id, fid, [leak, bopla], [])
-    await scans_service.mark_finding_fp(db, ADMIN, scan_id, fid)
+    await scans_service.mark_finding_fp(db, ADMIN, scan_id, fid, fp_impact_weight=1)
 
     result = await scans_service.promote_finding_to_chain(db, ADMIN, scan_id, fid, {
         "severity": "high", "member_vuln_ids": [leak, bopla, twofa],
@@ -120,10 +120,11 @@ async def test_promote_fp_finding_to_a_new_chain(db):
     assert chain["title"] == "Horizontal-to-vertical takeover", "title defaults from the finding"
     assert (chain["severity"], [m["vuln_id"] for m in chain["members"]]) == ("high", [leak, bopla, twofa])
     cursor = await db.execute(
-        "SELECT is_chain, is_false_positive, is_ignored FROM scan_findings WHERE id = ?", (fid,)
+        "SELECT is_chain, is_false_positive, is_ignored, fp_impact_weight FROM scan_findings WHERE id = ?", (fid,)
     )
     row = await cursor.fetchone()
     assert (row["is_chain"], row["is_false_positive"], row["is_ignored"]) == (1, 0, 0)
+    assert row["fp_impact_weight"] is None
     matches = (await finding_matches.load(db, [fid]))[fid]
     assert matches["chain_ids"] == [chain["id"]]
 

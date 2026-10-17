@@ -7,7 +7,7 @@ const pct = value => `${(value * 100).toFixed(1)}%`;
 const amount = formatChartResource;
 const runName = scan => `#${scan.id} · ${scan.scanner_name || 'Unknown scanner'}${scan.scanner_version ? ` ${scan.scanner_version}` : ''} · ${scan.app_name || 'Unknown app'}${scan.app_version ? ` ${scan.app_version}` : ''}`;
 
-export function ScanPerformanceChart({ scans, labelsMap, resource, metric, onAxisChange, latest }) {
+export function ScanPerformanceChart({ scans, labelsMap, resource = 'cost', metric = 'weighted_f05', onAxisChange, latest }) {
   const [selectedId, setSelectedId] = useState(null);
   const [hoveredId, setHoveredId] = useState(null);
   const { points, excluded, missingResource, missingScore } = useMemo(() => chartRuns(scans, resource, metric), [scans, resource, metric]);
@@ -21,7 +21,9 @@ export function ScanPerformanceChart({ scans, labelsMap, resource, metric, onAxi
   const py = value => H - bottom - value * (H - top - bottom);
   const active = points.find(p => p.scan.id === (hoveredId ?? selectedId));
   const selected = points.find(p => p.scan.id === selectedId);
-  const provisional = points.some(p => p.scan.metrics.pending > 0);
+  const reviewedMetric = ['weighted_f05', 'weighted_precision'].includes(metric);
+  const awaitingReview = reviewedMetric ? scans.filter(scan => scan.metrics?.weighted_score_provisional !== false).length : 0;
+  const provisional = !reviewedMetric && points.some(p => p.scan.metrics.pending > 0);
   const mixedApps = new Set(points.map(p => p.scan.app_id)).size > 1;
 
   return <section className="card scan-chart" aria-label="Run performance chart">
@@ -37,7 +39,7 @@ export function ScanPerformanceChart({ scans, labelsMap, resource, metric, onAxi
       </div>
     </div>
     <p className="scan-chart-coverage" role="status">{points.length} of {scans.length} filtered runs plotted{latest ? ' · Latest per scanner and app' : ' · All matching runs'}.
-      {excluded > 0 && ` ${excluded} omitted: ${missingResource} missing or restricted ${resource}, ${missingScore} undefined scores (reasons can overlap).`}</p>
+      {excluded > 0 && ` ${excluded} omitted: ${missingResource} missing or restricted ${resource}, ${missingScore} unavailable scores${awaitingReview ? `, including ${awaitingReview} awaiting review` : ''} (reasons can overlap).`}</p>
     {mixedApps && <p className="scan-summary-note">These runs span multiple apps. Compare the same app version and benchmark corpus.</p>}
     {points.length ? <>
       <div className="scan-chart-plot">
@@ -83,14 +85,17 @@ export function ScanPerformanceChart({ scans, labelsMap, resource, metric, onAxi
           <span className="text-muted">{(labelsMap[active.scan.id] || []).map(label => label.name).join(' · ') || 'No labels'}</span>
         </> : <span className="text-muted">Hover to preview; click to select. Use the selector to inspect overlapping runs.</span>}</div>
       </div>
-    </> : <div className="scan-chart-empty"><h3>No runs to plot</h3><p>Try another axis or change the filters. Runs need a score and a recorded cost or duration you can access.</p></div>}
-    <p className="scan-summary-note">{metric === 'f05'
+    </> : <div className="scan-chart-empty"><h3>{awaitingReview > 0 && awaitingReview === scans.length ? 'Awaiting review' : 'No runs to plot'}</h3><p>{reviewedMetric ? 'Weighted scores require completed finding and FP impact review, plus an accessible cost or duration.' : 'Try another axis or change the filters. Runs need a score and a recorded cost or duration you can access.'}</p></div>}
+    <p className="scan-summary-note">{reviewedMetric
+      ? 'Reviewed scans only. Conservative estimates for scans awaiting review are available in scan detail.'
+      : metric === 'f05'
       ? 'F₀.₅ favors precision. Pending findings count against the score.'
       : metric === 'weighted_rate' ? 'Weighted detection includes vulnerability and chain impact points.'
-        : 'Pending findings are excluded from this score.'} {provisional && 'Scores with pending findings are provisional.'}</p>
+        : 'Pending findings are excluded from this score.'} {provisional && 'Scores awaiting finding or FP penalty review are provisional.'}</p>
     <details className="scan-stat-help"><summary>Scoring and comparison limits</summary>
+      <p>Weighted F₀.₅ = 1.25 × credited impact / (credited impact + 0.25 × available impact + FP penalties). Weighted precision = credited impact / (credited impact + FP penalties). Credited vulnerability and chain impact is counted once. FP clusters use the maximum reviewer penalty (1/3/9/27). These weighted scores are plotted only after all findings and FP penalties are reviewed. Conservative estimates, with 27-point penalties for pending findings and unreviewed FP clusters, remain available in scan detail.</p>
       <p>F₀.₅ = 1.25 TP / (1.25 TP + 0.25 FN + FP + pending). Precision has four times recall’s weight. As in testbed, pending findings count against this score. FP uses clustered false positives; a benchmark corpus is required.</p>
-      <p>Precision = TP/(TP+FP), recall = TP/(TP+FN), and F1 = 2TP/(2TP+FP+FN). These exclude pending findings. Weighted detection is credited impact points divided by available points, including chains. The scorer does not define weighted precision or weighted F₀.₅.</p>
+      <p>Precision = TP/(TP+FP), recall = TP/(TP+FN), and F1 = 2TP/(2TP+FP+FN). These exclude pending findings. Weighted detection is credited impact points divided by available points, including chains.</p>
       <p>Scores use the current benchmark revision. Missing values are omitted, not treated as zero. Points are individual runs and may overlap. Compare the same app version, corpus, and settings; one run cannot establish a reliable performance advantage.</p>
     </details>
   </section>;

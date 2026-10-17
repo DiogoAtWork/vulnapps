@@ -356,6 +356,7 @@ const pct = v => v != null ? `${(v * 100).toFixed(1)}%` : 'N/A';
 
 function Metrics({ metrics, app, revision, scan }) {
   const incomplete = metrics.adjudication_complete === false;
+  const awaitingReview = metrics.weighted_score_provisional !== false;
   const tiers = metrics.tiers || {};
   const asRun = scan?.corpus_revision;
 
@@ -372,16 +373,30 @@ function Metrics({ metrics, app, revision, scan }) {
         </span>
       </div>
 
+      <details className="scan-stat-help mb-2"><summary>About weighted F₀.₅</summary>
+        <p>Weighted F₀.₅ favors precision and includes credited vulnerability and chain impact. Its headline score requires all findings and FP impact penalties to be reviewed.</p>
+        <p>Weighted F₀.₅ = 1.25 × credited impact / (credited impact + 0.25 × available impact + FP penalties). Reviewers assign FP penalties of 1/3/9/27 points; each cluster takes its maximum penalty. Weighted precision = credited impact / (credited impact + FP penalties).</p>
+      </details>
       <div className="metrics-grid mb-2">
+        <div className="metric-card">
+          <div className={`metric-value ${awaitingReview ? 'text-muted text-sm' : 'text-accent'}`} style={awaitingReview ? { fontSize: '1rem' } : undefined}>{awaitingReview ? 'Awaiting review' : pct(metrics.weighted_f05)}</div>
+          <div className="metric-label">Weighted F₀.₅</div>
+          {!awaitingReview && <div className="text-muted text-xs">Weighted precision {pct(metrics.weighted_precision)}</div>}
+          {awaitingReview && <details className="scan-stat-help"><summary>Conservative estimate</summary>
+            <p>Weighted F₀.₅ {pct(metrics.weighted_f05)} · weighted precision {pct(metrics.weighted_precision)}</p>
+            <p>{metrics.pending ?? '—'} pending findings · {metrics.weighted_fp_unreviewed ?? '—'} FP clusters awaiting impact review.</p>
+            <p>This estimate assigns 27 points to each pending finding and unreviewed FP cluster. Reviewed penalties use 1/3/9/27 points; a cluster takes its maximum penalty. It is excluded from headline comparisons until review is complete.</p>
+            <p>Estimate = 1.25 × credited impact / (credited impact + 0.25 × available impact + FP penalties + 27 × pending findings).</p>
+          </details>}
+        </div>
         <div className="metric-card">
           <div className="metric-value text-accent">{pct(metrics.weighted_rate)}</div>
           <div className="metric-label">
-            Weighted Detection
+            Weighted detection
             <span className="tooltip-wrap text-muted text-xs" style={{ marginLeft: 4 }}>ⓘ
               <span className="tooltip-text">
                 Severity-weighted detection rate: points found / points available on the
-                1/3/9/27 scale. The headline metric — a missed reflected XSS and a missed
-                chained authz bypass are not the same miss.
+                1/3/9/27 scale, including chain credit.
               </span>
             </span>
           </div>
@@ -522,36 +537,55 @@ function TierMatrix({ tiers, metrics }) {
 function FpGroup({ scanId, finding, canEdit, onUpdate }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(finding.fp_group || '');
+  const [weight, setWeight] = useState(finding.fp_impact_weight ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const penaltyLabel = finding.fp_impact_weight == null ? 'penalty unreviewed (27 pts)' : `penalty ${finding.fp_impact_weight} pts`;
 
   const save = async () => {
-    await api.post(`/scans/${scanId}/findings/${finding.id}/mark-fp`, { fp_group: draft.trim() || null });
-    setEditing(false);
-    onUpdate();
+    if (saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      await api.post(`/scans/${scanId}/findings/${finding.id}/mark-fp`, {
+        fp_group: draft.trim() || null, fp_impact_weight: weight === '' ? null : Number(weight),
+      });
+      setEditing(false);
+      onUpdate();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (!canEdit) {
-    return finding.fp_group
-      ? <span className="text-muted text-xs font-mono">group: {finding.fp_group}</span>
-      : <span className="text-muted">FP</span>;
+    return <span className="text-muted text-xs">{finding.fp_group ? `group: ${finding.fp_group}` : 'FP'} · {penaltyLabel}</span>;
   }
   if (editing) {
     return (
-      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-        <input className="form-input" value={draft} autoFocus
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input className="form-input" aria-label="False-positive cluster key" value={draft} autoFocus disabled={saving}
                onChange={e => setDraft(e.target.value)}
                placeholder="cluster key…"
                style={{ width: 120, padding: '2px 6px', fontSize: '0.8rem' }}
                onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }} />
-        <button className="btn btn-primary btn-sm" onClick={save}
-                style={{ height: 22, padding: '0 0.4rem', fontSize: '0.7rem' }}>Set</button>
+        <select className="form-select" aria-label="Reviewer false-positive impact penalty" value={weight} onChange={e => setWeight(e.target.value)} style={{ width: 160 }} disabled={saving}>
+          <option value="">Unreviewed (27 pts)</option>
+          {[1, 3, 9, 27].map(value => <option key={value} value={value}>{value} pts · reviewed</option>)}
+        </select>
+        <button className="btn btn-primary btn-sm" onClick={save} disabled={saving}
+                style={{ height: 22, padding: '0 0.4rem', fontSize: '0.7rem' }}>{saving ? 'Saving…' : 'Set'}</button>
+        <button className="btn btn-outline btn-sm" disabled={saving} onClick={() => setEditing(false)}>Cancel</button>
+        {error && <span role="alert" className="text-error text-xs">{error}</span>}
       </div>
     );
   }
   return (
-    <span className="editable-field text-xs" onClick={() => { setDraft(finding.fp_group || ''); setEditing(true); }}
-          title="Group this false positive with others describing the same non-issue">
-      {finding.fp_group ? <span className="font-mono">group: {finding.fp_group}</span> : <span className="text-muted">FP — ungrouped</span>}
-    </span>
+    <button type="button" className="editable-field text-xs" onClick={() => { setDraft(finding.fp_group || ''); setWeight(finding.fp_impact_weight ?? ''); setError(''); setEditing(true); }}
+          title="Review the FP cluster and its impact penalty; clustered penalties use the maximum">
+      {finding.fp_group ? <span className="font-mono">group: {finding.fp_group}</span> : <span className="text-muted">FP · ungrouped</span>} · {penaltyLabel}
+    </button>
   );
 }
 

@@ -8,6 +8,45 @@ scale or the credit rules ever breaks that separation, these fail.
 
 from app import scoring
 from app.scoring import compute_metrics
+import pytest
+
+
+def test_weighted_f05_penalizes_clusters_and_pending_without_trusting_severity():
+    reviewed = finding(2, fp=1, fp_group="duplicate", severity="critical")
+    reviewed["fp_impact_weight"] = 3
+    duplicate = finding(3, fp=1, fp_group="DUPLICATE", severity="info")
+    duplicate["fp_impact_weight"] = 9
+    findings = [finding(1, matched=1), reviewed, duplicate]
+    metrics = compute_metrics(findings, [vuln(1, 27), vuln(2, 9)])
+    assert metrics["weighted_fp_penalty"] == 9
+    assert metrics["weighted_precision"] == pytest.approx(27 / 36)
+    assert metrics["weighted_f05"] == pytest.approx(33.75 / 45)
+    assert metrics["weighted_score_provisional"] is False
+
+    findings.append(finding(4, severity="info"))
+    metrics = compute_metrics(findings, [vuln(1, 27), vuln(2, 9)])
+    assert metrics["weighted_pending_penalty"] == 27
+    assert metrics["weighted_f05"] == pytest.approx(33.75 / 72)
+    assert metrics["weighted_f05_upper"] == pytest.approx(33.75 / 45)
+    assert metrics["weighted_score_provisional"] is True
+
+    duplicate.pop("fp_impact_weight")
+    metrics = compute_metrics(findings, [vuln(1, 27), vuln(2, 9)])
+    assert metrics["weighted_fp_penalty"] == 27
+    assert metrics["weighted_fp_unreviewed"] == 1
+    assert metrics["weighted_f05"] == pytest.approx(33.75 / 90)
+
+
+def test_weighted_f05_deduplicates_credit_and_handles_chain_only_and_empty_scans():
+    chain = {"id": 10, "impact_weight": 27, "members": [1]}
+    findings = [finding(1, matched=1, matched_chain=10), finding(2, matched=1, matched_chain=10)]
+    metrics = compute_metrics(findings, [vuln(1, 9)], [chain])
+    assert metrics["weighted_found"] == metrics["weighted_total"] == 36
+    assert metrics["weighted_f05"] == 1
+    assert compute_metrics([finding(1, matched_chain=10)], [], [chain])["weighted_f05"] == 1
+    assert compute_metrics([], [vuln(1, 9)])["weighted_f05"] == 0
+    assert compute_metrics([], [vuln(1, 9)])["weighted_precision"] is None
+    assert compute_metrics([], [])["weighted_f05"] is None
 
 
 # ---------------------------------------------------------------------------

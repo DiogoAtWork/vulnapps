@@ -43,6 +43,23 @@ const scanLabels = Object.fromEntries(scans.map((scan, i) => [scan.id,
   ])].map(index => labels[index]).sort((a, b) => a.name.localeCompare(b.name)),
 ]));
 
+function previewMetrics(scan) {
+  const weighted_found = scan.tp_count === null ? null : scan.tp_count * (2 + scan.id % 3);
+  const weighted_total = weighted_found === null ? null : 140;
+  const unreviewed = scan.fp_count > 0 && scan.id % 3 === 0 ? 1 : 0;
+  const penalty = weighted_found === null ? null : (scan.fp_count - unreviewed) * 3 + unreviewed * 27;
+  const pending = weighted_found === null ? null : scan.pending_count * 27;
+  const f05 = extra => weighted_found === null ? null : 1.25 * weighted_found / (weighted_found + .25 * weighted_total + penalty + extra);
+  return {
+    tp: scan.tp_count, fp_groups: scan.fp_count, fn: scan.fn_count, pending: scan.pending_count,
+    weighted_found, weighted_total, weighted_fp_penalty: penalty, weighted_fp_unreviewed: unreviewed,
+    weighted_f05: f05(pending), weighted_f05_upper: f05(0),
+    weighted_precision: weighted_found === null ? null : weighted_found / (weighted_found + penalty + pending),
+    weighted_precision_upper: weighted_found === null ? null : weighted_found / (weighted_found + penalty),
+    weighted_score_provisional: scan.pending_count > 0 || unreviewed > 0,
+  };
+}
+
 function scanResponse(params) {
   const appId = params.get('app_id');
   let rows = scans.filter(scan => {
@@ -72,11 +89,7 @@ function scanResponse(params) {
   return {
     scans: rows.map((scan, i) => params.get('include_metrics') === 'true' ? {
       ...scan,
-      metrics: {
-        tp: scan.tp_count, fp_groups: scan.fp_count, fn: scan.fn_count, pending: scan.pending_count,
-        weighted_found: scan.tp_count === null ? null : scan.tp_count * (2 + scan.id % 3),
-        weighted_total: scan.tp_count === null ? null : 140,
-      },
+      metrics: previewMetrics(scan),
     } : scan).sort((a, b) => b.created_at.localeCompare(a.created_at)),
     scan_labels_map: Object.fromEntries(rows.map(scan => [scan.id, scanLabels[scan.id]])),
     scanners: [...new Set(scans.filter(scan => !appId || String(scan.app_id) === appId).map(scan => scan.scanner_name))].sort(),

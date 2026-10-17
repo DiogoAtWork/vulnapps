@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { scanStatistics, scanQuality, canonicalScanCounts, metricExtremes } from './scanStatistics.js';
+import { scanStatistics, scanQuality, canonicalScanCounts, metricExtremes, weightedScoreWinner } from './scanStatistics.js';
 
 const summarize = values => scanStatistics(values.map(tp_count => ({ tp_count })), 'tp_count');
 
@@ -58,7 +58,7 @@ test('Counts and Quality use the same corpus-scoped canonical counts, including 
 
 test('best/worst direction follows the metric while corpus size stays neutral', () => {
   const stats = { min: 2, max: 8 };
-  for (const field of ['weighted_rate', 'weighted_found', 'precision', 'recall', 'f1', 'tp_count']) {
+  for (const field of ['weighted_f05', 'weighted_precision', 'weighted_rate', 'weighted_found', 'precision', 'recall', 'f1', 'tp_count']) {
     assert.deepEqual(metricExtremes(stats, field), [['Best', 8], ['Worst', 2]]);
   }
   for (const field of ['fp_count', 'fn_count', 'pending_count']) {
@@ -80,4 +80,39 @@ test('cost per point uses credited weighted points and preserves missing or hidd
   assert.equal(quality(Infinity, 15).cost_per_point, null);
   assert.equal(quality(2.7, null).cost_per_point, null);
   assert.equal(scanQuality({ cost: 2.7 }).cost_per_point, null);
+});
+
+test('weighted headlines require completed review and never substitute estimates or count scores', () => {
+  const metrics = { tp: 10, fp_groups: 0, fn: 0, weighted_found: 27, weighted_total: 30,
+    weighted_score_provisional: false, weighted_f05: .4, weighted_f05_upper: .9, weighted_precision: .5, weighted_precision_upper: 1 };
+  const quality = scanQuality({ metrics });
+  assert.equal(quality.weighted_f05, .4);
+  assert.equal(quality.weighted_precision, .5);
+  assert.equal(scanQuality({ metrics: { ...metrics, weighted_f05: 0 } }).weighted_f05, 0);
+  assert.equal(scanQuality({ metrics: { weighted_f05_upper: .9, weighted_precision_upper: 1 } }).weighted_f05, null);
+  assert.equal(scanQuality({ metrics: { weighted_f05: 1.1, weighted_precision: NaN } }).weighted_f05, null);
+  assert.equal(scanQuality({ tp_count: 10, fp_count: 0, fn_count: 0 }).weighted_precision, null);
+});
+
+test('incomplete or unknown review is excluded from headlines and group means', () => {
+  const metrics = { weighted_f05: .9, weighted_precision: 1, weighted_found: 27, weighted_total: 30 };
+  for (const review of [true, undefined]) {
+    const quality = scanQuality({ metrics: { ...metrics, weighted_score_provisional: review } });
+    assert.equal(quality.weighted_f05, null);
+    assert.equal(quality.weighted_precision, null);
+    assert.equal(quality.weighted_rate, .9);
+  }
+  const scans = [true, false].map(review => scanQuality({ metrics: { ...metrics, weighted_score_provisional: review } }));
+  assert.equal(scanStatistics(scans, 'weighted_f05').n, 1);
+  assert.equal(scanStatistics(scans, 'weighted_f05').mean, .9);
+});
+
+test('comparison crowns a unique reviewed weighted F0.5 winner only when all scores are available', () => {
+  const run = score => ({ metrics: { weighted_f05: score, weighted_score_provisional: false } });
+  assert.equal(weightedScoreWinner([run(.7), run(.9)]), 1);
+  assert.equal(weightedScoreWinner([run(.7), run(.7)]), -1);
+  assert.equal(weightedScoreWinner([run(0), run(0)]), -1);
+  assert.equal(weightedScoreWinner([run(.7)]), -1);
+  assert.equal(weightedScoreWinner([run(.7), { metrics: { weighted_f05: .9, weighted_score_provisional: true } }]), -1);
+  assert.equal(weightedScoreWinner([run(.7), { metrics: {} }]), -1);
 });
