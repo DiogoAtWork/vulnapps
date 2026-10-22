@@ -2181,3 +2181,10 @@ must redact cost, tokens, duration, and notes using scan-detail visibility rules
 
 The scatter chart includes a green dashed upper-left guide for higher quality and lower
 cost/shorter duration. This is a directional visual cue, not a scoring threshold.
+
+
+### Team app navigation
+The team detail page (`/teams/:id`) includes a View Apps link in its header
+for every team member and application admin. Use the existing outline small
+button style and link to `/apps?filter=team%3A{id}` so the existing Apps page
+shows that team's apps using its current cards and team filter.

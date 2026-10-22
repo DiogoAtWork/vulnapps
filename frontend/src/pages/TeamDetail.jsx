@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge } from '../components/Badge';
 
@@ -82,7 +82,10 @@ export default function TeamDetail() {
             </>
           )}
         </h1>
-        {is_team_admin && <button className="btn btn-danger btn-sm" onClick={deleteTeam}>Delete Team</button>}
+        <div className="flex gap-1 items-center">
+          <Link to={`/apps?filter=team%3A${team.id}`} className="btn btn-outline btn-sm">View Apps</Link>
+          {is_team_admin && <button className="btn btn-danger btn-sm" onClick={deleteTeam}>Delete Team</button>}
+        </div>
       </div>
 
       {error && <div className="alert alert-error mb-2">{error}</div>}
