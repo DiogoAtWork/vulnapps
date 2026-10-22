@@ -65,6 +65,9 @@ async def create_app(request: Request):
             visibility=body.get("visibility", "private"),
             team_id=team_id,
             tech_stack=body.get("tech_stack", ""),
+            source_repository=body.get("source_repository", apps_service.SOURCE_UNSET),
+            source_commit=body.get("source_commit", apps_service.SOURCE_UNSET),
+            source_directory=body.get("source_directory", apps_service.SOURCE_UNSET),
             clone_from=clone_from,
         )
     except ValueError as e:
@@ -98,11 +101,14 @@ async def update_app(request: Request, app_id: int):
             visibility=body.get("visibility", "private"),
             team_id=team_id,
             tech_stack=body.get("tech_stack", ""),
+            source_repository=body.get("source_repository", apps_service.SOURCE_UNSET),
+            source_commit=body.get("source_commit", apps_service.SOURCE_UNSET),
+            source_directory=body.get("source_directory", apps_service.SOURCE_UNSET),
             # Absent means "leave alone" — see update_app.
             benchmark_verified=body.get("benchmark_verified"),
         )
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404 if str(e) == "App not found" else 400, detail=str(e))
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     finally:

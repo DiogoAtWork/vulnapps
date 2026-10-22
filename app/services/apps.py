@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 from app.dependencies import get_team_role
@@ -9,6 +10,7 @@ from app.services import chains as chains_service
 
 
 _ALLOWED_URL_SCHEMES = ("http", "https")
+SOURCE_UNSET = object()
 
 
 def _validate_url(url: str | None) -> str | None:
@@ -27,6 +29,59 @@ def _validate_url(url: str | None) -> str | None:
     if scheme not in _ALLOWED_URL_SCHEMES:
         raise ValueError("URL must start with http:// or https://")
     return url
+
+
+def _validate_source_repository(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("Source repository must be an HTTP(S) URL")
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        parsed = urlparse(value)
+        valid = (
+            parsed.scheme.lower() in _ALLOWED_URL_SCHEMES
+            and parsed.hostname
+            and parsed.username is None
+            and parsed.password is None
+            and "\\" not in value
+            and not any(character.isspace() or ord(character) < 32 for character in value)
+        )
+        parsed.port
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError("Source repository must be an HTTP(S) URL without credentials")
+    return value
+
+
+def _validate_source_commit(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("Source commit must be a full 40- or 64-character hexadecimal SHA")
+    value = value.strip().lower()
+    if not value:
+        return None
+    if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", value):
+        raise ValueError("Source commit must be a full 40- or 64-character hexadecimal SHA")
+    return value
+
+
+def _validate_source_directory(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or any(ord(character) < 32 for character in value):
+        raise ValueError("Source directory must be a relative POSIX path without control characters")
+    value = value.strip()
+    if not value:
+        return None
+    if (value.startswith("/") or "\\" in value
+            or ".." in value.split("/")):
+        raise ValueError("Source directory must be a relative POSIX path without parent traversal")
+    return "/".join(part for part in value.split("/") if part and part != ".") or None
 
 
 # ---------------------------------------------------------------------------
@@ -255,12 +310,16 @@ async def create_app(
     team_id: int | None,
     tech_stack: str,
     clone_from: int | None = None,
+    source_repository=SOURCE_UNSET,
+    source_commit=SOURCE_UNSET,
+    source_directory=SOURCE_UNSET,
 ) -> dict:
     """Create a new app and return its row as a dict.
 
     *tech_stack* is a comma-separated string.
     If *clone_from* is given, vulnerabilities are copied from that app
-    (provided the user has read access to it).
+    (provided the user has read access to it). Omitted source fields inherit
+    from that app; explicit ``None`` clears them.
 
     Raises ``PermissionError`` for visibility violations.
     Raises ``ValueError`` for invalid inputs (e.g. team visibility without team).
@@ -273,11 +332,30 @@ async def create_app(
     if visibility == "team":
         await _validate_team_access(db, user, team_id)
 
+    source_app = None
+    if clone_from:
+        vis_clause, vis_params = app_visibility_filter(user)
+        cursor = await db.execute(
+            f"SELECT * FROM apps WHERE id = ? AND {vis_clause}",
+            [clone_from] + vis_params,
+        )
+        source_app = await cursor.fetchone()
+    if source_repository is SOURCE_UNSET:
+        source_repository = source_app["source_repository"] if source_app else None
+    if source_commit is SOURCE_UNSET:
+        source_commit = source_app["source_commit"] if source_app else None
+    if source_directory is SOURCE_UNSET:
+        source_directory = source_app["source_directory"] if source_app else None
+    source_repository = _validate_source_repository(source_repository)
+    source_commit = _validate_source_commit(source_commit)
+    source_directory = _validate_source_directory(source_directory)
+
     cursor = await db.execute(
         """INSERT INTO apps (name, version, description, url, created_by,
-           visibility, team_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (name, version, description, url, user["sub"], visibility, team_id),
+           visibility, team_id, source_repository, source_commit, source_directory)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (name, version, description, url, user["sub"], visibility, team_id,
+         source_repository, source_commit, source_directory),
     )
     app_id = cursor.lastrowid
     await _save_tech_stack(db, app_id, tech_stack)
@@ -291,76 +369,69 @@ async def create_app(
     # the SOURCE app's revision timeline and meaningless in the new app's,
     # so those reset to a fresh revision 1 rather than being copied; an
     # invalidated (retired) source vuln is skipped rather than cloned back in.
-    if clone_from:
-        vis_clause, vis_params = app_visibility_filter(user)
+    if source_app:
         cursor = await db.execute(
-            f"SELECT id FROM apps WHERE id = ? AND {vis_clause}",
-            [clone_from] + vis_params,
+            "SELECT * FROM vulnerabilities WHERE app_id = ? AND invalidated_at_revision IS NULL",
+            (clone_from,),
         )
-        if await cursor.fetchone():
+        source_vulns = await cursor.fetchall()
+        vuln_id_map: dict[int, int] = {}
+        for v in source_vulns:
             cursor = await db.execute(
-                "SELECT * FROM vulnerabilities WHERE app_id = ? AND invalidated_at_revision IS NULL",
-                (clone_from,),
+                """INSERT INTO vulnerabilities
+                   (app_id, vuln_id, title, severity, vuln_type, http_method,
+                    url, parameter, filename, line_number, description,
+                    code_location, poc, remediation, created_by,
+                    impact_weight, difficulty_tier, weight_verified,
+                    existed_since_revision, known_since_revision)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)""",
+                (
+                    app_id,
+                    v["vuln_id"],
+                    v["title"],
+                    v["severity"],
+                    v["vuln_type"],
+                    v["http_method"],
+                    v["url"],
+                    v["parameter"],
+                    v["filename"],
+                    v["line_number"],
+                    v["description"],
+                    v["code_location"],
+                    v["poc"],
+                    v["remediation"],
+                    user["sub"],
+                    v["impact_weight"],
+                    v["difficulty_tier"],
+                    v["weight_verified"],
+                ),
             )
-            source_vulns = await cursor.fetchall()
-            vuln_id_map: dict[int, int] = {}
-            for v in source_vulns:
-                cursor = await db.execute(
-                    """INSERT INTO vulnerabilities
-                       (app_id, vuln_id, title, severity, vuln_type, http_method,
-                        url, parameter, filename, line_number, description,
-                        code_location, poc, remediation, created_by,
-                        impact_weight, difficulty_tier, weight_verified,
-                        existed_since_revision, known_since_revision)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)""",
-                    (
-                        app_id,
-                        v["vuln_id"],
-                        v["title"],
-                        v["severity"],
-                        v["vuln_type"],
-                        v["http_method"],
-                        v["url"],
-                        v["parameter"],
-                        v["filename"],
-                        v["line_number"],
-                        v["description"],
-                        v["code_location"],
-                        v["poc"],
-                        v["remediation"],
-                        user["sub"],
-                        v["impact_weight"],
-                        v["difficulty_tier"],
-                        v["weight_verified"],
-                    ),
-                )
-                vuln_id_map[v["id"]] = cursor.lastrowid
+            vuln_id_map[v["id"]] = cursor.lastrowid
 
+        cursor = await db.execute(
+            "SELECT * FROM chains WHERE app_id = ? AND invalidated_at_revision IS NULL",
+            (clone_from,),
+        )
+        source_chains = await cursor.fetchall()
+        for c in source_chains:
             cursor = await db.execute(
-                "SELECT * FROM chains WHERE app_id = ? AND invalidated_at_revision IS NULL",
-                (clone_from,),
+                """INSERT INTO chains (app_id, chain_id, title, severity, impact_weight,
+                   description, existed_since_revision)
+                   VALUES (?, ?, ?, ?, ?, ?, 1)""",
+                (app_id, c["chain_id"], c["title"], c["severity"], c["impact_weight"], c["description"]),
             )
-            source_chains = await cursor.fetchall()
-            for c in source_chains:
-                cursor = await db.execute(
-                    """INSERT INTO chains (app_id, chain_id, title, severity, impact_weight,
-                       description, existed_since_revision)
-                       VALUES (?, ?, ?, ?, ?, ?, 1)""",
-                    (app_id, c["chain_id"], c["title"], c["severity"], c["impact_weight"], c["description"]),
-                )
-                new_chain_pk = cursor.lastrowid
-                cursor = await db.execute(
-                    "SELECT vuln_id, step_order FROM chain_members WHERE chain_pk = ? ORDER BY step_order",
-                    (c["id"],),
-                )
-                for m in await cursor.fetchall():
-                    new_vuln_id = vuln_id_map.get(m["vuln_id"])
-                    if new_vuln_id is not None:
-                        await db.execute(
-                            "INSERT INTO chain_members (chain_pk, vuln_id, step_order) VALUES (?, ?, ?)",
-                            (new_chain_pk, new_vuln_id, m["step_order"]),
-                        )
-
+            new_chain_pk = cursor.lastrowid
+            cursor = await db.execute(
+                "SELECT vuln_id, step_order FROM chain_members WHERE chain_pk = ? ORDER BY step_order",
+                (c["id"],),
+            )
+            for m in await cursor.fetchall():
+                new_vuln_id = vuln_id_map.get(m["vuln_id"])
+                if new_vuln_id is not None:
+                    await db.execute(
+                        "INSERT INTO chain_members (chain_pk, vuln_id, step_order) VALUES (?, ?, ?)",
+                        (new_chain_pk, new_vuln_id, m["step_order"]),
+                    )
     await db.commit()
 
     cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (app_id,))
@@ -382,6 +453,9 @@ async def update_app(
     team_id: int | None,
     tech_stack: str,
     benchmark_verified=None,
+    source_repository=SOURCE_UNSET,
+    source_commit=SOURCE_UNSET,
+    source_directory=SOURCE_UNSET,
 ) -> dict:
     """Update an existing app. Returns the updated row as a dict.
 
@@ -389,6 +463,7 @@ async def update_app(
     an app whose vulns have actually been hand-reviewed (weights/tiers set, not
     just backfilled), so it is a deliberate setting rather than something a
     routine app edit toggles by omission.
+    Omitted source fields are preserved; explicit ``None`` clears them.
 
     Raises ``ValueError`` if app not found.
     Raises ``PermissionError`` if access denied or visibility invalid.
@@ -405,10 +480,22 @@ async def update_app(
     if visibility == "team":
         await _validate_team_access(db, user, team_id)
 
+    if source_repository is SOURCE_UNSET:
+        source_repository = app["source_repository"]
+    if source_commit is SOURCE_UNSET:
+        source_commit = app["source_commit"]
+    if source_directory is SOURCE_UNSET:
+        source_directory = app["source_directory"]
+    source_repository = _validate_source_repository(source_repository)
+    source_commit = _validate_source_commit(source_commit)
+    source_directory = _validate_source_directory(source_directory)
+
     await db.execute(
         """UPDATE apps SET name=?, version=?, description=?, url=?,
-           visibility=?, team_id=?, updated_at=datetime('now') WHERE id=?""",
-        (name, version, description, url, visibility, team_id, app_id),
+           visibility=?, team_id=?, source_repository=?, source_commit=?, source_directory=?,
+           updated_at=datetime('now') WHERE id=?""",
+        (name, version, description, url, visibility, team_id,
+         source_repository, source_commit, source_directory, app_id),
     )
     if benchmark_verified is not None:
         await db.execute(
