@@ -98,7 +98,7 @@ export default function AppsList() {
               <Link to={'/apps/' + a.id} className="card" key={a.id}>
                 <h3 className="card-title">
                   {a.name}{' '}
-                  <span className="text-muted text-sm">v{a.version}</span>
+                  {a.version && <span className="text-muted text-sm">v{a.version}</span>}
                   {a.visibility !== 'public' && (
                     <span
                       className={'badge badge-' + (a.visibility === 'team' ? 'medium' : 'low')}

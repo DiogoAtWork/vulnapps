@@ -17,6 +17,9 @@ export default function AppForm() {
     version: '',
     description: '',
     url: '',
+    source_repository: '',
+    source_commit: '',
+    source_directory: '',
     tech_stack: '',
     benchmark_verified: false,
     visibility: 'private',
@@ -49,6 +52,9 @@ export default function AppForm() {
             version: app.version || '',
             description: app.description || '',
             url: app.url || '',
+            source_repository: app.source_repository || '',
+            source_commit: app.source_commit || '',
+            source_directory: app.source_directory || '',
             tech_stack: (data.tech_stack || []).join(', '),
             benchmark_verified: !!data.app?.benchmark_verified,
             visibility: app.visibility || 'private',
@@ -63,6 +69,9 @@ export default function AppForm() {
             version: app.version || '',
             description: app.description || '',
             url: app.url || '',
+            source_repository: app.source_repository || '',
+            source_commit: app.source_commit || '',
+            source_directory: app.source_directory || '',
             tech_stack: (data.tech_stack || []).join(', '),
             // A clone starts uncurated — copied tiers are not reviewed tiers.
             benchmark_verified: false,
@@ -94,6 +103,9 @@ export default function AppForm() {
       version: form.version,
       description: form.description || null,
       url: form.url || null,
+      source_repository: form.source_repository || null,
+      source_commit: form.source_commit || null,
+      source_directory: form.source_directory || null,
       tech_stack: form.tech_stack,
       benchmark_verified: form.benchmark_verified,
       visibility: form.visibility,
@@ -183,7 +195,7 @@ export default function AppForm() {
             </div>
 
             <div className="form-group">
-              <label className="form-label" htmlFor="url">URL</label>
+              <label className="form-label" htmlFor="url">App URL</label>
               <input
                 type="url"
                 id="url"
@@ -191,6 +203,48 @@ export default function AppForm() {
                 className="form-input"
                 value={form.url}
                 onChange={handleChange}
+                placeholder="https://app.example.com"
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="source_repository">Source repository</label>
+              <input
+                type="url"
+                id="source_repository"
+                name="source_repository"
+                className="form-input"
+                value={form.source_repository}
+                onChange={handleChange}
+                placeholder="https://github.com/owner/repository"
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="source_commit">Source commit</label>
+              <input
+                type="text"
+                id="source_commit"
+                name="source_commit"
+                className="form-input"
+                value={form.source_commit}
+                onChange={handleChange}
+                placeholder="Full commit SHA, when known"
+                maxLength={64}
+              />
+              <small className="text-muted">The reviewed source revision. This does not confirm which revision is deployed.</small>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="source_directory">Source directory</label>
+              <input
+                type="text"
+                id="source_directory"
+                name="source_directory"
+                className="form-input"
+                value={form.source_directory}
+                onChange={handleChange}
+                placeholder="Optional path within the repository"
               />
             </div>
 

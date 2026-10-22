@@ -681,9 +681,27 @@ Version** above.
 |--------|------|-------------|-------------|
 | GET | `/api/apps` | None / read | List apps (visibility filtered). Query: `?q=`, `?filter=` |
 | GET | `/api/apps/{id}` | None / read | App detail with vulns, tech stack, permissions |
-| POST | `/api/apps` | User+ / full | Create app. Body: `{name, version, description, url, visibility, team_id, tech_stack, clone_from}` |
+| POST | `/api/apps` | User+ / full | Create app. Body: `{name, version, description, url, source_repository, source_commit, source_directory, visibility, team_id, tech_stack, clone_from}` |
 | PUT | `/api/apps/{id}` | App write / full | Update app |
 | DELETE | `/api/apps/{id}` | App write / full | Delete app |
+
+Apps have optional `source_repository`, `source_commit` and `source_directory`
+columns (migration 043).
+Following testbed target manifests, the repository identifies the app source and
+the commit pins its revision. Neither field claims that the live deployment runs
+that revision. Repository URLs must use HTTP(S), include a host and contain no
+credentials. A commit, when recorded, is a full 40- or 64-character hexadecimal
+SHA. The optional directory identifies an app inside a monorepo using a relative
+POSIX path without parent traversal. Missing values remain null. These fields do
+not replace the deployment URL or release version; app descriptions explain the app.
+
+Create/edit forms expose these fields. App details show a repository link and a
+short commit label with the full SHA in its tooltip; GitHub commits link directly
+to the revision. GitHub directories link to the pinned tree, or HEAD when no
+commit is recorded. Cloning inherits source fields unless explicitly overridden.
+On update, omitted source fields retain their values and explicit null clears
+them, preserving metadata when older clients edit an app. App cards omit empty
+release versions.
 
 ### Vulnerabilities (`/api/apps/{id}/vulns`)
 | Method | Path | Auth / Scope | Description |

@@ -145,6 +145,12 @@ export default function AppDetail() {
   if (!data) return null;
 
   const { app, vulns = [], chains = [], tech_stack = [], scan_count = 0, severity_counts = {}, can_edit, can_submit_scan } = data;
+  const repositoryUrl = app.source_repository?.replace(/\/$/, '').replace(/\.git$/, '');
+  const githubRepository = repositoryUrl && /^https?:\/\/github\.com\/[^/?#]+\/[^/?#]+$/i.test(repositoryUrl);
+  const commitUrl = githubRepository && app.source_commit
+    ? `${repositoryUrl}/commit/${app.source_commit}` : null;
+  const directoryUrl = githubRepository && app.source_directory
+    ? `${repositoryUrl}/tree/${app.source_commit || 'HEAD'}/${app.source_directory.split('/').map(encodeURIComponent).join('/')}` : null;
   // vuln_count is the true total from the server; vulns may be capped for very large apps.
   const vulnCount = data.vuln_count ?? vulns.length;
 
@@ -309,10 +315,39 @@ export default function AppDetail() {
           <div className="detail-label">Description</div>
           <div className="detail-value">{app.description || 'No description provided.'}</div>
 
-          <div className="detail-label">URL</div>
+          <div className="detail-label">App URL</div>
           <div className="detail-value">
             {app.url ? <a href={app.url}>{app.url}</a> : <span className="text-muted">N/A</span>}
           </div>
+
+          <div className="detail-label">Source repository</div>
+          <div className="detail-value">
+            {app.source_repository
+              ? <a href={app.source_repository} target="_blank" rel="noopener noreferrer">{app.source_repository.replace(/^https?:\/\//, '').replace(/\.git\/?$/, '')}</a>
+              : <span className="text-muted">Not recorded</span>}
+          </div>
+
+          {app.source_commit && (
+            <>
+              <div className="detail-label">Source commit</div>
+              <div className="detail-value">
+                {commitUrl
+                  ? <a href={commitUrl} target="_blank" rel="noopener noreferrer" title={app.source_commit}><code>{app.source_commit.slice(0, 12)}</code></a>
+                  : <code title={app.source_commit}>{app.source_commit.slice(0, 12)}</code>}
+              </div>
+            </>
+          )}
+
+          {app.source_directory && (
+            <>
+              <div className="detail-label">Source directory</div>
+              <div className="detail-value">
+                {directoryUrl
+                  ? <a href={directoryUrl} target="_blank" rel="noopener noreferrer"><code>{app.source_directory}</code></a>
+                  : <code>{app.source_directory}</code>}
+              </div>
+            </>
+          )}
 
           <div className="detail-label">Tech Stack</div>
           <div className="detail-value">
