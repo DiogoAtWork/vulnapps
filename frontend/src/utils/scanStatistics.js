@@ -17,6 +17,8 @@ export function scanQuality(scan) {
   const valid = (...values) => values.every(value => Number.isFinite(value) && value >= 0);
   return {
     ...scan,
+    cost_per_point: valid(scan.cost, metrics?.weighted_found) && metrics.weighted_found > 0
+      ? scan.cost / metrics.weighted_found : null,
     weighted_found: valid(metrics?.weighted_found) ? metrics.weighted_found : null,
     weighted_total: valid(metrics?.weighted_total) ? metrics.weighted_total : null,
     weighted_rate: valid(metrics?.weighted_found, metrics?.weighted_total) && metrics.weighted_total > 0

@@ -2159,9 +2159,14 @@ count-based precision, recall, and F1 from the same current-revision scorer. Eac
 remains equally weighted when aggregating scores. Zero available points yields unavailable
 detection, not zero percent. Reset filters preserves the scoring choice.
 
-Grouped lists request `include_metrics=true`. The service batches authorized scans' scoring
-inputs, shares corpus/revision reads, and calls the canonical scoring implementation. The
-ordinary list omits this optional computation. Failed list requests clear stale results and
+All scan list views request `include_metrics=true`. The service batches authorized scans' scoring
+inputs, shares corpus/revision reads, and calls the canonical scoring implementation. Individual rows and grouped drill-downs show sortable Weighted Detection
+(credited / available impact points, plus percentage) and Cost / point (USD scan cost divided
+by credited points, four decimals). Include chain credit and use the current benchmark scorer.
+Show an em dash for missing scores, hidden/missing costs, or zero credited points in the cost
+ratio; preserve valid zero cost. Cost visibility follows the existing API permissions.
+Leave the combined coverage footer's new metric cells empty: individual weighted scores must
+not be summed across scans. Failed list requests clear stale results and
 show the load error rather than a misleading successful empty state.
 
 Scan result payloads are keyed by API query and authenticated user. Render results only after

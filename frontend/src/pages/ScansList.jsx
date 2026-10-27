@@ -83,7 +83,7 @@ export default function ScansList() {
   const queryParams = new URLSearchParams(Object.entries(params).filter(([, value]) => value));
   labelValues.forEach(label => queryParams.append('label', label));
   if (labelValues.length) queryParams.set('label_match', labelMatch);
-  if (groupBy || chartView) queryParams.set('include_metrics', 'true');
+  queryParams.set('include_metrics', 'true');
   const query = queryParams.toString();
   const requestKey = JSON.stringify([query, user?.id ?? null]);
   const { loading, data: resultData, error } = scanResultForKey(request, requestKey);
@@ -117,7 +117,7 @@ export default function ScansList() {
   };
 
   const hasFilters = labelValues.length > 0 || Object.values(params).some(v => v);
-  const rawScans = useMemo(() => (resultData?.scans || []).map(canonicalScanCounts), [resultData]);
+  const rawScans = useMemo(() => (resultData?.scans || []).map(scan => scanQuality(canonicalScanCounts(scan))), [resultData]);
   const coverage = resultData?.coverage || null;
   const labelsMap = resultData?.scan_labels_map || {};
 
@@ -128,6 +128,8 @@ export default function ScansList() {
       switch (sortKey) {
         case 'scanner': return `${(s.scanner_name || '').toLowerCase()} ${s.scanner_version || ''}`;
         case 'app': return `${(s.app_name || '').toLowerCase()} ${s.app_version || ''}`;
+        case 'weighted_found': return s.weighted_found ?? (sortDir === 'asc' ? Infinity : -Infinity);
+        case 'cost_per_point': return s.cost_per_point ?? (sortDir === 'asc' ? Infinity : -Infinity);
         case 'tp': return s.tp_count ?? -1;
         case 'fp': return s.fp_count ?? -1;
         case 'pending': return s.pending_count ?? -1;
@@ -183,7 +185,7 @@ export default function ScansList() {
       setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     } else {
       setSortKey(key);
-      setSortDir(['date','tp','fp','pending','fn'].includes(key) ? 'desc' : 'asc');
+      setSortDir(['date','tp','fp','pending','fn','weighted_found'].includes(key) ? 'desc' : 'asc');
     }
   };
   const sortArrow = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
@@ -253,6 +255,8 @@ export default function ScansList() {
                   {sortableTh('fp', 'FP')}
                   {sortableTh('pending', 'Pending')}
                   {sortableTh('fn', 'FN')}
+                  {sortableTh('weighted_found', 'Weighted Detection', { title: 'Impact-weighted points credited / available, including chains. Current benchmark revision.' })}
+                  {sortableTh('cost_per_point', 'Cost / point', { title: 'Scan cost in USD / credited weighted detection points. Lower is better.' })}
                   <th>Severity</th>
                   <th>Labels</th>
                   {user && <th style={{ width: 40 }}></th>}
@@ -271,7 +275,7 @@ export default function ScansList() {
                             style={{ accentColor: 'var(--accent)', width: 16, height: 16, cursor: 'pointer' }} />
                         </td>
                       )}
-                      <td data-label="Scanner">
+                      <td data-label="Scanner" style={{ minWidth: 130 }}>
                         <Link to={`/scans/${scan.id}`}>{scan.scanner_name}</Link>
                         {scan.scanner_version && <span className="text-muted text-sm"> v{scan.scanner_version}</span>}
                       </td>
@@ -281,7 +285,7 @@ export default function ScansList() {
                           {scan.app_version && <span className="text-muted text-sm"> v{scan.app_version}</span>}
                         </td>
                       )}
-                      <td data-label="Date">{scan.scan_date}</td>
+                      <td data-label="Date" style={{ whiteSpace: 'nowrap' }}>{scan.scan_date}</td>
                       <td data-label="TP" className="text-success">
                         <span className="tp-cell">
                           {scan.tp_count ?? '-'}
@@ -291,6 +295,13 @@ export default function ScansList() {
                       <td data-label="FP" className="text-error">{scan.fp_count ?? '-'}</td>
                       <td data-label="Pending" className="text-muted">{scan.pending_count ?? '-'}</td>
                       <td data-label="FN" className="text-warn">{scan.fn_count ?? '-'}</td>
+                      <td data-label="Weighted Detection" style={{ whiteSpace: 'nowrap' }}>
+                        <strong>{scan.weighted_found === null || scan.weighted_total === null ? '—' : `${scan.weighted_found.toLocaleString(undefined, { maximumFractionDigits: 2 })} / ${scan.weighted_total.toLocaleString(undefined, { maximumFractionDigits: 2 })} pts`}</strong>
+                        {scan.weighted_rate !== null && <div className="text-muted text-xs">{(scan.weighted_rate * 100).toFixed(1)}%</div>}
+                      </td>
+                      <td data-label="Cost / point" title="USD per credited weighted detection point">
+                        {scan.cost_per_point === null ? '—' : `$${scan.cost_per_point.toFixed(4)}`}
+                      </td>
                       <td data-label="Severity"><span className="sev-pill-group"><SeverityCells s={scan} /></span></td>
                       <td data-label="Labels">
                         {labels.length > 0 && (
@@ -340,7 +351,7 @@ export default function ScansList() {
                   <td></td>
                   <td></td>
                   <td className="text-warn" data-label="Missed by all">{coverage.missed.length}</td>
-                  <td colSpan={user ? 3 : 2}></td>
+                  <td colSpan={user ? 5 : 4}></td>
                 </tr>
                 {coverage.missed.length > 0 && (
                   <tr className="scans-coverage-missed">
