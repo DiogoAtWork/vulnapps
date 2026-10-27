@@ -2214,11 +2214,12 @@ shows that team's apps using its current cards and team filter.
 
 ## Reviewed weighted F₀.₅
 
-The scan list Quality view shows Scanner, App (when unscoped), Date, sortable
-Weighted F₀.₅, combined FP/Pending Review, and Labels. Counts exposes TP/FP/Pending/FN
-and severity. The shared Quality/Counts control also applies to grouped views;
-Weighted/Unweighted applies to summary scoring only. Preserve combined app coverage
-in the footer rather than summing repeat scans.
+The Individual scans tab retains the full diagnostic table: Scanner, App (when
+unscoped), Date, TP, FP, Pending, FN, Weighted Detection (credited / available points
+and percentage), Cost / point, Severity, and Labels. It has no Quality/Counts switch
+or weighted F₀.₅ headline. Grouped summaries retain Quality/Counts controls and the
+reviewed weighted F₀.₅ metrics described below. Expanded groups use the same full
+scan table as Individual scans.
 
 Let T be credited impact, A available corpus impact and E clustered FP penalties.
 Use existing 1/3/9/27 ground-truth weights and confirmed-chain credit; each vulnerability

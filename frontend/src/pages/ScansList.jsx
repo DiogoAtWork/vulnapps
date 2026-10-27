@@ -117,7 +117,7 @@ export default function ScansList() {
   };
 
   const hasFilters = labelValues.length > 0 || Object.values(params).some(v => v);
-  const rawScans = useMemo(() => (resultData?.scans || []).map(canonicalScanCounts), [resultData]);
+  const rawScans = useMemo(() => (resultData?.scans || []).map(scan => scanQuality(canonicalScanCounts(scan))), [resultData]);
   const coverage = resultData?.coverage || null;
   const labelsMap = resultData?.scan_labels_map || {};
 
@@ -128,8 +128,8 @@ export default function ScansList() {
       switch (sortKey) {
         case 'scanner': return `${(s.scanner_name || '').toLowerCase()} ${s.scanner_version || ''}`;
         case 'app': return `${(s.app_name || '').toLowerCase()} ${s.app_version || ''}`;
-        case 'weighted_f05': return scanQuality(s).weighted_f05 ?? -1;
-        case 'weighted_rate': return scanQuality(s).weighted_rate ?? -1;
+        case 'weighted_found': return s.weighted_found ?? (sortDir === 'asc' ? Infinity : -Infinity);
+        case 'cost_per_point': return s.cost_per_point ?? (sortDir === 'asc' ? Infinity : -Infinity);
         case 'tp': return s.tp_count ?? -1;
         case 'fp': return s.fp_count ?? -1;
         case 'pending': return s.pending_count ?? -1;
@@ -185,7 +185,7 @@ export default function ScansList() {
       setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     } else {
       setSortKey(key);
-      setSortDir(['date','tp','fp','pending','fn','weighted_f05','weighted_rate'].includes(key) ? 'desc' : 'asc');
+      setSortDir(['date','tp','fp','pending','fn','weighted_found'].includes(key) ? 'desc' : 'asc');
     }
   };
   const sortArrow = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
@@ -229,17 +229,9 @@ export default function ScansList() {
     fetchScans();
   };
 
-  const chooseMetricView = view => {
-    setMetricView(view);
-    if ((view === 'quality' && ['tp', 'fp', 'pending', 'fn'].includes(sortKey)) ||
-        (view === 'counts' && sortKey === 'weighted_f05')) {
-      setSortKey('date');
-      setSortDir('desc');
-    }
-  };
   const metricViewControl = <div className="scan-segmented" role="group" aria-label="Metrics view">
-    <button aria-pressed={metricView === 'quality'} onClick={() => chooseMetricView('quality')}>Quality</button>
-    <button aria-pressed={metricView === 'counts'} onClick={() => chooseMetricView('counts')}>Counts</button>
+    <button aria-pressed={metricView === 'quality'} onClick={() => setMetricView('quality')}>Quality</button>
+    <button aria-pressed={metricView === 'counts'} onClick={() => setMetricView('counts')}>Counts</button>
   </div>;
 
   const renderScanTable = scanRows => (
@@ -264,24 +256,19 @@ export default function ScansList() {
                   {sortableTh('scanner', 'Scanner')}
                   {!appId && sortableTh('app', 'App')}
                   {sortableTh('date', 'Date')}
-                  {metricView === 'quality' ? <>
-                    {sortableTh('weighted_f05', 'Weighted F₀.₅')}
-                    <th>Review</th>
-                  </> : <>
-                    {sortableTh('tp', 'TP')}
-                    {sortableTh('fp', 'FP')}
-                    {sortableTh('pending', 'Pending')}
-                    {sortableTh('fn', 'FN')}
-                    <th>Severity</th>
-                  </>}
+                  {sortableTh('tp', 'TP')}
+                  {sortableTh('fp', 'FP')}
+                  {sortableTh('pending', 'Pending')}
+                  {sortableTh('fn', 'FN')}
+                  {sortableTh('weighted_found', 'Weighted Detection', { title: 'Impact-weighted points credited / available, including chains. Current benchmark revision.' })}
+                  {sortableTh('cost_per_point', 'Cost / point', { title: 'Scan cost in USD / credited weighted detection points. Lower is better.' })}
+                  <th>Severity</th>
                   <th>Labels</th>
                   {user && <th style={{ width: 40 }}></th>}
                 </tr>
               </thead>
               <tbody>
                 {scanRows.map(scan => {
-                  const quality = scanQuality(scan);
-                  const awaitingReview = scan.metrics?.weighted_score_provisional !== false;
                   const labels = prioritiseLabels(labelsMap[scan.id] || []);
                   const hiddenLabels = labels.slice(MAX_VISIBLE_LABELS);
                   return (
@@ -293,7 +280,7 @@ export default function ScansList() {
                             style={{ accentColor: 'var(--accent)', width: 16, height: 16, cursor: 'pointer' }} />
                         </td>
                       )}
-                      <td data-label="Scanner">
+                      <td data-label="Scanner" style={{ minWidth: 130 }}>
                         <Link to={`/scans/${scan.id}`}>{scan.scanner_name}</Link>
                         {scan.scanner_version && <span className="text-muted text-sm"> v{scan.scanner_version}</span>}
                       </td>
@@ -303,28 +290,24 @@ export default function ScansList() {
                           {scan.app_version && <span className="text-muted text-sm"> v{scan.app_version}</span>}
                         </td>
                       )}
-                      <td data-label="Date">{scan.scan_date}</td>
-                      {metricView === 'quality' ? <>
-                        <td data-label="Weighted F₀.₅" title="Available after all findings and false-positive impact penalties are reviewed.">
-                          {awaitingReview ? <span className="text-muted text-sm">Awaiting review</span>
-                            : <strong>{quality.weighted_f05 === null ? '—' : `${(quality.weighted_f05 * 100).toFixed(1)}%`}</strong>}
-                        </td>
-                        <td data-label="Review" className="text-sm">
-                          <span className="text-error">{scan.fp_count ?? '—'} FP</span>
-                          <span className="text-muted"> · {scan.pending_count ?? '—'} pending</span>
-                        </td>
-                      </> : <>
-                        <td data-label="TP" className="text-success">
-                          <span className="tp-cell">
-                            {scan.tp_count ?? '-'}
-                            <TpBreakdown s={scan} />
-                          </span>
-                        </td>
-                        <td data-label="FP" className="text-error">{scan.fp_count ?? '-'}</td>
-                        <td data-label="Pending" className="text-muted">{scan.pending_count ?? '-'}</td>
-                        <td data-label="FN" className="text-warn">{scan.fn_count ?? '-'}</td>
-                        <td data-label="Severity"><span className="sev-pill-group"><SeverityCells s={scan} /></span></td>
-                      </>}
+                      <td data-label="Date" style={{ whiteSpace: 'nowrap' }}>{scan.scan_date}</td>
+                      <td data-label="TP" className="text-success">
+                        <span className="tp-cell">
+                          {scan.tp_count ?? '-'}
+                          <TpBreakdown s={scan} />
+                        </span>
+                      </td>
+                      <td data-label="FP" className="text-error">{scan.fp_count ?? '-'}</td>
+                      <td data-label="Pending" className="text-muted">{scan.pending_count ?? '-'}</td>
+                      <td data-label="FN" className="text-warn">{scan.fn_count ?? '-'}</td>
+                      <td data-label="Weighted Detection" style={{ whiteSpace: 'nowrap' }}>
+                        <strong>{scan.weighted_found === null || scan.weighted_total === null ? '—' : `${scan.weighted_found.toLocaleString(undefined, { maximumFractionDigits: 2 })} / ${scan.weighted_total.toLocaleString(undefined, { maximumFractionDigits: 2 })} pts`}</strong>
+                        {scan.weighted_rate !== null && <div className="text-muted text-xs">{(scan.weighted_rate * 100).toFixed(1)}%</div>}
+                      </td>
+                      <td data-label="Cost / point" title="USD per credited weighted detection point">
+                        {scan.cost_per_point === null ? '—' : `$${scan.cost_per_point.toFixed(4)}`}
+                      </td>
+                      <td data-label="Severity"><span className="sev-pill-group"><SeverityCells s={scan} /></span></td>
                       <td data-label="Labels">
                         {labels.length > 0 && (
                           <div className="scan-labels-cell">
@@ -365,20 +348,15 @@ export default function ScansList() {
                   <td className="text-success" data-label="Found by any">
                     <span className="tp-cell">
                       <span title="Distinct catalog vulns found by at least one listed scan">
-                        {coverage.found} / {coverage.total}{metricView === 'quality' ? ' found' : ''}
+                        {coverage.found} / {coverage.total}
                       </span>
                       <SeverityBreakdown counts={coverage.found_by_severity} label="found by at least one scan" />
                     </span>
                   </td>
-                  {metricView === 'quality' ? <>
-                    <td className="text-warn" data-label="Missed by all">{coverage.missed.length} missed by all</td>
-                    <td colSpan={user ? 2 : 1}></td>
-                  </> : <>
-                    <td></td>
-                    <td></td>
-                    <td className="text-warn" data-label="Missed by all">{coverage.missed.length}</td>
-                    <td colSpan={user ? 3 : 2}></td>
-                  </>}
+                  <td></td>
+                  <td></td>
+                  <td className="text-warn" data-label="Missed by all">{coverage.missed.length}</td>
+                  <td colSpan={user ? 5 : 4}></td>
                 </tr>
                 {coverage.missed.length > 0 && (
                   <tr className="scans-coverage-missed">
@@ -451,7 +429,6 @@ export default function ScansList() {
           <button aria-pressed={!chartView && !!groupBy} onClick={() => setView('grouped')}>Grouped summary</button>
           <button aria-pressed={chartView} onClick={() => setView('chart')}>Performance chart</button>
         </div>
-        {!chartView && !groupBy && metricViewControl}
         {!chartView && groupBy && <label className="scan-group-control">Group by
           <select aria-label="Group by" className="form-select" value={groupBy} onChange={e => setFilter('group_by', e.target.value)}>
             {Object.entries(scanGroupOptions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -459,8 +436,6 @@ export default function ScansList() {
         </label>}
         <span className="scan-result-count text-muted text-sm" role="status">{loading ? 'Loading scans…' : error ? 'Scans unavailable' : `${scans.length} ${scans.length === 1 ? 'scan' : 'scans'}${!chartView && groupBy ? ` in ${groups.length} groups` : ''}`}</span>
       </div>
-
-      {!groupBy && !chartView && metricView === 'quality' && <details className="scan-stat-help mb-2"><summary>About weighted F₀.₅</summary><p>Weighted F₀.₅ favors precision using credited vulnerability and chain impact. The headline score appears after all findings and FP impact penalties are reviewed. Open a scan to see its conservative estimate while review is pending.</p></details>}
 
       {error && <p role="alert" className="text-error">Could not load scans: {error} <button className="btn btn-outline btn-sm" onClick={fetchScans}>Retry</button></p>}
 

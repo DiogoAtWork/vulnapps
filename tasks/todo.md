@@ -577,3 +577,14 @@ penalty and covered chain promotion on current main. Real browser checks against
 disposable migrated DB verify review/save/reset/reload, group sample eligibility, chart
 exclusions, Quality/Counts coverage footer, weighted winner and severity suppression.
 Four screenshots under docs/screenshots/weighted-f05 use synthetic data only.
+
+## PR #9 rebase and individual scan layout
+- [x] Rebase reviewed weighted F₀.₅ onto main, preserving cost-per-point support.
+- [x] Restore main's full individual scan table and keep reviewed scores in other views.
+- [x] Verify 19 frontend tests, 77 focused backend tests, production build, and individual/grouped browser views.
+- [ ] Publish follow-up commit and screenshot comment on PR #9; upstream branch requires maintainer write access.
+
+Rebase review: current main includes PR #12. Preserved its full scan table and cost
+visibility while retaining reviewed F₀.₅ in grouped summaries, charts and comparisons.
+The configured GitHub account has READ access upstream, so prepared branch publication
+uses the fork; a maintainer must apply the rebased branch to PR #9.

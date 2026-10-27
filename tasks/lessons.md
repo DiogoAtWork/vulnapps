@@ -164,3 +164,8 @@ taken that from a dry run of the importer, which was never submitted. The score 
 query the stored scan for every vuln involved and check which other findings credit it.
 A dry run, an audit file, or an earlier session's numbers are not the stored state. If
 the check wasn't done, say the effect is unverified instead of asserting it.
+
+## Rebase dependent scan UI changes before integration
+When updating a PR that touches the same scan table as a newly merged change, fetch
+main and rebase first. Preserve the approved individual layout while integrating
+scoring changes in their requested views.
