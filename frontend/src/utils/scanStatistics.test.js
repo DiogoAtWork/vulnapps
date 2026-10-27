@@ -67,3 +67,17 @@ test('best/worst direction follows the metric while corpus size stays neutral', 
   assert.deepEqual(metricExtremes(stats, 'weighted_total'), [['Min', 2], ['Max', 8]]);
   assert.deepEqual(metricExtremes({ min: null, max: null }, 'recall'), [['Best', null], ['Worst', null]]);
 });
+
+
+test('cost per point uses credited weighted points and preserves missing or hidden costs', () => {
+  const quality = (cost, points) => scanQuality({ cost, metrics: { weighted_found: points, weighted_total: 100 } });
+  assert.equal(quality(2.7, 13.5).cost_per_point, 0.2);
+  assert.equal(quality(0, 15).cost_per_point, 0);
+  assert.equal(quality(2.7, 0).cost_per_point, null);
+  assert.equal(quality(null, 15).cost_per_point, null);
+  assert.equal(quality(undefined, 15).cost_per_point, null);
+  assert.equal(quality(-1, 15).cost_per_point, null);
+  assert.equal(quality(Infinity, 15).cost_per_point, null);
+  assert.equal(quality(2.7, null).cost_per_point, null);
+  assert.equal(scanQuality({ cost: 2.7 }).cost_per_point, null);
+});

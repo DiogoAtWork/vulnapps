@@ -549,3 +549,15 @@ Still open on the CURRENT app (305), not blocked by the above:
       350) stay untouched pending the user's conversation with whoever imported them —
       except one change made before the hold: the v940 "Hardcoded JWT signing secret"
       finding re-credited CODE-001 -> TP-012.
+
+# Scan list weighted points and cost per point
+
+- [x] Inspect canonical scoring and cost visibility.
+- [x] Add sortable weighted detection and USD per credited point to individual rows and grouped drill-downs.
+- [x] Verify calculations, frontend build, and desktop preview.
+- [x] Show preview before committing; user approved commit and PR.
+- [x] Prepare reviewed changes for commit and PR publication.
+
+Review: 15 frontend utility tests, the existing scan-cost permission test, and production
+build passed. Desktop preview uses synthetic data because app 326 is not visible anonymously.
+User reviewed the synthetic preview and approved commit and PR publication.
